@@ -1,0 +1,219 @@
+= Trabajo Práctico: Bases de Datos I
+Cristian Reynés <cristianreynes@gmail.com>; Cristian Jurajuria <cljurajuria23@gmail.com>; Lucas Abalos <lukotas100@gmail.com>; Jeremias Ale Carbajales <jereac10@gmail.com>;
+v1, {docdate}. Docentes Daniel Bertaccini y Daniel Rondelli (COM-02)
+:title-page:
+:numbered:
+:source-highlighter: coderay
+:tabsize: 4
+
+== Introducción
+
+El trabajo presenta un modelo de datos que se utiliza para almacenar información relativa
+a la inscripción de alumnes a materias y al registro de sus notas, para la carrera de Tecnicatura
+Universitaria en Informática de la UNGS. 
+
+- Este contiene las siguientes tablas: 
+* `alumne` 
+* `materia` 
+* `correlatividad`
+* `comision`, 
+* `cursada`, 
+* `periodo`, 
+* `historia_academica`, 
+* `error` (funciona como log de errores), 
+* `envio_email` (tabla que administra los mails a enviar a los alumnes) 
+
+- y las siguientes funciones/triggers: 
+* add_pks_y_fks.sql
+* apertura_de_inscripción.sql
+* aplicacion_de_cupos.sql
+* baja_de_inscripcion.sql
+* cierre_de_cursada.sql
+* cierre_de_inscripcion.sql
+* del_pks_y_fks.sql
+* generacion_datos_alumne.sql
+* generacion_datos_h_academica.sql
+* ingreso_de_nota_de_cursada.sql
+* inscripcion_a_materia.sql
+* trigger_funcion_mail.sql
+* trigger_funcion_mail_2.sql
+
+El sistema debe administrar la apertura y el cierre de los períodos de inscripción, el alta y la baja
+de inscripciones a materias, la aplicación de cupos, el ingreso de notas y el cierre de cursadas,
+y mantener toda la información de les alumnes, de las materias y comisiones, así como de sus
+correlatividades.
+
+Se debe asegurar en todo momento la consistencia de la información mantenida—e.g. no puede
+haber más alumnes aceptades en una comisión que lo que indica su cupo, el proceso de cierre de
+aplicación de cupos no puede quedar a medio hacer, etc.
+Les alumnes deben ser informades vía email cuando ocurran eventos importantes sobre su situación
+en cada materia.
+
+Se deberán cargar 20 alumnes y 21 materias. Todas las materias tendrán una comisión cada una,
+excepto una materia que tendrá dos comisiones, y otra que tendrá tres comisiones. La tabla periodo
+deberá tener todos los semestres informados en la historia académica.
+
+Por último, para poder comparar el modelo relacional con un modelo no relacional NoSQL, se
+pide guardar los datos de alumnes, materias, comisiones e inscripciones a cursada (al menos de
+dos materias, mínimo de tres alumnes por comisión) en una base de datos NoSQL basada en
+JSON. Para ello, utilizar la base de datos BoltDB. Este código también deberá ejecutarse desde
+una aplicación CLI escrita en Go.
+
+== Descripción
+
+=== Composición
+
+El repositorio del sistema contiene 3 sub-repositorios, uno contiene los JSON con los datos a cargar, otra la base de datos noSQL y el tercero
+los archivos sql de las funciones del sistema, además contiene un archivo llamado main.go.
+Al modelo de datos y sus funciones se accede por medio de un menú CLI programado en main.go. Este permite cargar las entradas de testeo y las funciones
+además de poder llamarlas de forma sencilla (para no invocarlas manualmente una por una desde postgres).
+
+=== Dificultades
+
+Al principio uno de los problemas era que no se cargaba ningún dato en la base de datos, resulta que se estaban cargando en postgres y no
+en la base de datos, con cambiarle el parámetro de postgres al nombre de la base de datos se solucionó.
+
+Otra de las dificultades que se presentaron fue a la hora de obtener el periodo actual, al principio no podía obtenerlo pero luego con
+obtener el más reciente de la tabla se pudo obtenerlo.
+
+A su vez de las dificultades que se presentó fue que a la hora de cerrar la cursada, al principio tiraba error al insertar en la tabla de
+historia académica, el problema fue que se le estaba pasando mal el parámetro del semestre, con cambiar una query se solucionó.
+
+Para la aplicación de cupos, el primer intento fue recorrer con un ciclo `for` las filas de los alumnos a aceptar, limitada por la cantidad de cupos.
+Este enfoque, parecido a recorrer un arreglo en Java, resultó complicar el problema. A partir de pensar en manipular los datos de la tabla en dos
+queries el problema resultó más sencillo, ya que el enfoque pasó a la condición que tenían que cumplir las queries para hacer sus respectivas operaciones en una linea.
+
+Los triggers también generaron bastantes dolores de cabeza, en su primer versión el `trigger_funcion_mail_2` al lanzarse cortaba la 
+ejecución, esto se solucionó cambiando las condiciones de actualización. Después de eso, el trigger se inicializaba bien, pero no 
+guardaba bien el `cuerpo_mail`, esto era porque estabamos haciendo que se ejecute después de que el `alumne` ya se hubiera eliminado 
+de `cursada`, se solucionó cambiando el `after delete on cursada` por `before delete on cursada`.
+
+También hubo muchos momentos en donde se presentaban problemas de sintaxis, causando muchos tipos de errores, 
+además de demorar la prueba de las funciones.
+
+
+=== Secuencia
+
+Para la creación de filas en la tabla de `error`, la primera columna
+pide un `int` que identifique al código de error.
+Para implementar esto, agregamos una secuencia que empieza con el valor 1 y se actualiza con incremento de 1.
+
+Para la creación de las filas de la tabla `envio_email`, la primera columna
+pide un `int` que identifique al código del mail.
+Para implementar esto, agregamos una secuencia que empieza con el valor 1 y se actualiza con incremento de 1.
+
+== Implementación
+
+=== SP y Triggers
+
+==== apertura de inscripción
+
+A la hora de hacer las verificaciones se nos pide comparar con el año actual y también se nos pide en la tabla de error introducir el timestamp actual.
+Para hacer las comparaciones utilizamos la instrucción select `current_timestamp`. Y con ese timestamp conseguimos el año actual y lo agregamos en la fila de la tabla error.
+
+==== inscripción a materia
+
+Se realizan las verificaciones correctamente reportando los errores en cada caso y luego se aprueba la solicitud de inscripción insertando en la tabla cursada los datos. Las verificaciones son sencillas, verifica
+si existe un periodo en inscripción, que el id de el alumno exista, que el id de la materia exista, que el id de la comisión exista para la materia, que el alumno no este inscripto
+previamente en la materia y que tengan en la historia académica las correlativas correspondientes aprobadas. Esta ultima era la verificación que nos ocasionó unos problemas pero
+se resolvió verificando al mismo tiempo si la materia a inscribirse tiene alguna correlatividad y si para cada una de las correlatividades de la materia el alumno no las tiene en 
+estado regular o aprobada en la historia académica ya retorna falso.
+
+==== baja de inscripción
+
+Para realizar la baja de inscripción de un alumno en una materia debemos de hacer varias verificaciones que si dan error, debemos de agregarlos a la tabla de errores.
+Primero debemos de verificar si el periodo actual se encuentra en estado de 'inscripción' o 'cursada'. Si no es así, se registra un error en la tabla de errores.
+Luego verificamos que tanto el alumne como la materia existan en la base de datos, si alguno no existe, se registra un error correspondiente. Por ultimo se verifica que el alumne esté inscrito en la materia y si no lo está se registra el error en la tabla error.
+Una vez realizada todas las verificaciones, actualizamos el estado del alumne a 'dado de baja' en la tabla cursada. Además, si luego de dar de baja al alumne en dicha comisión hay un alumne en la lista de espera, su estado pasa a estar a 'aceptade'.
+
+==== cierre de inscripción
+Se realiza una verificación para corroborar si existe el año y el semestre en la tabla periodo. Si no existe se reporta el error, si existe se actualiza el estado del periodo en la tabla como "cierre inscrip".
+
+==== aplicación de cupos
+
+Para aplicar los cupos la idea fue, para las comisiones que tenían inscriptos, guardar el cupo en una variable y luego hacer `update` con el límite de estudiantes que establece el cupo.
+Ya que esto no se podía realizar, en la documentación de postgres encontré un ejemplo de `with` queries.
+Con esa query auxiliar, en la que se encuentra una lista de `id_alumne` menor o igual al límite del cupo, la sentencia `update` que pone en estado `aceptade` a los estudiantes con estado `ingresade` queda más corta y legible. Luego de aceptar a los alumnos, el resto de alumnos que tenían estado `ingresade` pasan a estar en estado `en espera`.
+
+==== ingreso de nota de cursada
+
+La función recibe los ids de alumne, materia, comisión y la nota a registrar. Después chequea si, existe un periodo en cursada, si existe el alumno y la materia, si la materia, de existir, tiene la comisión pedida, si el alumno tiene una inscripción aceptada en esa materia y comisión y si la nota está en el rango entre 0 y 10.
+Si todo está en regla, se actualiza la nota en cursada.
+
+==== cierre de cursada
+
+Para realizar el cierre de cursada debemos de asegurarnos de que se cumplan varias verificaciones que si dan error, debemos de agregarlos a la tabla de errores.
+Primero que el periodo actual esté en estado 'cursada'. Si no es así, se registra un error en la tabla de errores. Luego, se verifica que la materia y la comisión existen en la base de datos y, si no existen, se registra un error en la tabla de errores.
+Además, también verifica que si hay 'alumnes' inscritos en la comisión y, si no hay inscripciones, se registra el error.
+Por último se asegura que todas las notas de los alumnes con estado de aceptade en la comisión han sido cargadas, y si falta alguna nota, se registra el error.
+Si cumple todas las verificaciones se actualiza la tabla historia_academica de los alumnos inscritos según la nota obtenida, luego de eso, los alumnes de la cursada son borrados de dicha tabla.
+
+==== envío de emails
+
+Esta función se divide en dos, por un lado hay dos triggers que sirven para disparar la generación de los mails y guardarlos en envio_mails. El primero tiene en cuenta los primeros 4 casos (inscripción registrada, inscripción dada de baja, inscripción aceptada tras aplicación inicial de cupos, inscripción en espera tras aplicación inicial de cupos
+, inscripción aceptada desde la lista de espera) y que implican cambios en la tabla cursada. El segundo contempla el 5to caso (cierre de cursada), que trabaja con la historia_academica (porque la cursada al haberse cerrado ya no 'existe').
+Ambos triggers, guardan en una variable de tipo text los datos del alumne y en otra los de la materia, a estos datos se los guarda en la variable cuerpo_mail y se le adosa el numero de comisión. Luego se evalua cual es el estado de cambio en la inscripción y se guarda en la tabla envio_mails agregando la info que corresponda.
+
+=== go SQL
+
+1. Importaciones: El programa importa los paquetes necesarios para trabajar con PostgreSQL, manejar archivos JSON, ejecutar comandos en el sistema operativo y otros aspectos básicos de Go.
+
+2. Estructuras: Define varias estructuras Go que representan tablas de base de datos. Cada estructura refleja una tabla en la base de datos, con campos que coinciden con los campos de las tablas respectivas.
+
+3. Función main():
+
+    - Bucle principal: El programa comienza con un bucle infinito que muestra un menú y espera la entrada del usuario.
+    Switch: Dependiendo de la opción seleccionada por el usuario en el menú, el programa ejecuta diversas acciones como crear la base de datos, crear tablas, insertar datos, crear funciones almacenadas, entre otros.
+    Conexión a la base de datos: Para cada opción del menú que interactúa con la base de datos, se abre una conexión a PostgreSQL utilizando la biblioteca database/sql.
+    Funciones:
+
+    - showMenu(): Muestra un menú de opciones para que el usuario seleccione qué acción realizar.
+    - cleanScreen(): Limpia la pantalla utilizando comandos del sistema operativo.
+    - databaseInitialization(): Crea una nueva base de datos PostgreSQL y se conecta a ella.
+    - createTables(), createPksandFks(), deletePksandFks(): Crean tablas, claves primarias y foráneas respectivamente utilizando archivos SQL almacenados localmente.
+    - extractJsonsAndInsertTables(): Lee datos desde archivos JSON y los inserta en las tablas de la base de datos.
+    - createFunctions(), functions(): Cargan funciones almacenadas en la base de datos y muestran un menú interactivo para ejecutar diferentes funcionalidades.
+    - Varios otros métodos auxiliares para ejecutar comandos SQL, cargar datos desde archivos, etc.
+
+4. Comentarios adicionales:
+
+    - El código hace un uso extensivo de manejo de errores utilizando log.Fatal() para capturar errores y terminar el programa en caso de que ocurran problemas críticos.
+    - Utiliza transacciones para asegurar que todas las operaciones en la base de datos sean atómicas.
+    - Incluye comentarios para explicar el propósito de cada función o sección del código.
+
+=== go noSQL
+
+El código en Go crea y gestiona una base de datos BoltDB para almacenar y manipular datos de alumnos, materias, comisiones y cursada.
+
+1. Definición de Estructuras: Se definen las estructuras Alumne, Materia, Comision y Cursada para almacenar información correspondiente a estudiantes, materias, comisiones y cursadas, respectivamente.
+
+2. Función Principal main:
+
+    - Menú Interactivo: Un bucle infinito muestra un menú con opciones para crear la base de datos, cargar datos, mostrar datos y salir del programa.
+    - Selección de Opciones: Según la opción seleccionada por el usuario, se ejecutan diferentes acciones:
+    - Crear Base de Datos: Inicializa la base de datos BoltDB.
+    - Cargar Datos: Serializa y guarda los datos predefinidos de alumnos, materias, comisiones y cursadas en la base de datos.
+    - Mostrar Datos: Recupera y muestra los datos almacenados en la base de datos.
+    
+3. Funciones Auxiliares:
+
+    - showMenu: Muestra el menú de opciones.
+    - cleanScreen: Limpia la pantalla.
+    - createDatabase: Crea la base de datos BoltDB.
+    - serializeAlumnes, serializeMaterias, serializeComisiones, serializeCursada: Serializan y guardan los datos en la base de datos.
+    - readData: Lee y muestra los datos de la base de datos.
+    - CreateUpdate: Crea o actualiza un registro en la base de datos.
+    - ReadUnique: Lee un registro específico de la base de datos.
+
+== Conclusiones
+
+En cuanto al propio uso de SQL, el tp nos sirvió para ver un uso un poco más práctico del lenguaje más allá de usar los comandos en ejercicios escritos
+en postgres de forma aislada. El testeo es la parte más complicada, porque es todo "a pico y pala" y si la tabla `errores` no aclara que está fallando, 
+es a puro prueba y error. En los triggers se nota más, porque si la BBDD devuelve un error, normalmente lo asocia a la función que lanzó al trigger 
+y no al propio trigger.
+Go como lenguaje es interesante y se consiguen buenos resultados para hacer un menú simple, aún así, es bastante pesado, hay que testear cada cosa de 
+forma individual no de error (de nuevo, el testeo es lo pesado).
+Pese a estas complicaciones, se consiguió un modelo de datos de prueba funcional y que funciona bien como ejemplo de base de datos. Además con go se 
+consiguió un entorno de prueba bastante intuitivo que hace fácil realizar las cargas de datos y pruebas de funcionalidad.
+
+
